@@ -1,0 +1,42 @@
+#!/bin/bash
+set -euo pipefail
+
+state=$(cat)
+container_id=$(jq -er '.id' <<<"$state")
+pid=$(jq -er '.pid' <<<"$state")
+runtime_state=/run/hyperlight-runtime
+state_file=$runtime_state/$container_id.cgroup
+uid=${HYPERLIGHT_DELEGATED_UID:-1000}
+gid=${HYPERLIGHT_DELEGATED_GID:-1000}
+
+fail() {
+    echo "hyperlight cgroup hook: $*" >&2
+    exit 1
+}
+
+[[ $pid =~ ^[0-9]+$ && -r /proc/$pid/cgroup ]] ||
+    fail "container init process is unavailable"
+cgroup_relative=$(awk -F: '$1 == "0" { print $3 }' "/proc/$pid/cgroup")
+[[ -n $cgroup_relative && $cgroup_relative != / ]] ||
+    fail "container runtime did not assign a cgroup"
+cgroup_root=/sys/fs/cgroup$cgroup_relative
+application_group=$cgroup_root/application
+provider_group=$cgroup_root/hyperlight-provider
+
+install -d -m 0700 "$runtime_state"
+printf '%s\n' "$cgroup_relative" >"$state_file"
+mkdir "$application_group" "$provider_group"
+printf '%s\n' "$pid" >"$application_group/cgroup.procs"
+printf '%s\n' '+cpu +memory +pids' >"$cgroup_root/cgroup.subtree_control" ||
+    fail "container cgroup controllers are unavailable"
+printf '%s\n' '+cpu +memory +pids' >"$provider_group/cgroup.subtree_control" ||
+    fail "provider child controllers are unavailable"
+[[ -e $provider_group/cgroup.kill ]] ||
+    fail "cgroup.kill is unavailable"
+
+chown "$uid:$gid" \
+    "$cgroup_root/cgroup.procs" \
+    "$provider_group" \
+    "$provider_group/cgroup.procs" \
+    "$provider_group/cgroup.subtree_control" \
+    "$provider_group/cgroup.kill"

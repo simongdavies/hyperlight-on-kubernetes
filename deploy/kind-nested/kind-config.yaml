@@ -1,0 +1,29 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hyperlight-nested
+nodes:
+  - role: control-plane
+    extraMounts:
+      - hostPath: /dev/kvm
+        containerPath: /dev/kvm
+      - hostPath: ${NATIVE_ROOT}/deploy/kind-nested
+        containerPath: /opt/hyperlight-runtime
+        readOnly: true
+      - hostPath: ${NATIVE_ROOT}/deploy/kind-nested/hyperlight-launcher-seccomp.json
+        containerPath: /var/lib/kubelet/seccomp/hyperlight-launcher.json
+        readOnly: true
+    labels:
+      hyperlight.dev/enabled: "true"
+      hyperlight.dev/hypervisor: kvm
+      hyperlight.dev/nested-demo: "true"
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri"]
+      enable_cdi = true
+      cdi_spec_dirs = ["/var/run/cdi", "/etc/cdi"]
+      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.hyperlight-delegated]
+        base_runtime_spec = "/etc/containerd/cri-base.json"
+        runtime_type = "io.containerd.runc.v2"
+        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.hyperlight-delegated.options]
+          BinaryName = "/opt/hyperlight-runtime/hyperlight-runc"
+          SystemdCgroup = true

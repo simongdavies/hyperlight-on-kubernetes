@@ -1,2 +1,3 @@
 hyperlight-app/target/**
 device-plugin/hyperlight-device-plugin
+.kind-nested-assets/

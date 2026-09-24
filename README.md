@@ -9,6 +9,53 @@ Run [Hyperlight](https://github.com/hyperlight-dev/hyperlight) sandboxes in Kube
 | **Local (KIND)** | `just local-up && just plugin-build && just plugin-local-push && just plugin-local-deploy` |
 | **Azure (AKS)** | `just azure-up && just get-aks-credentials && just plugin-build && just plugin-acr-push && just plugin-azure-deploy` |
 
+### Nested Hyperlight VM demo in Ubuntu-24.04 WSL
+
+The dedicated nested demo runs the landed Hyperlight containment stack from
+signed commit `bb153b2db78e2c8a8bf035a40c65afe8f93afdca`:
+
+```text
+outer Hyperlight guest
+  -> separate Minijail-confined host-function process
+     -> inner Hyperlight sandbox in that worker process
+        -> inner guest-function calls
+```
+
+Run these commands from Ubuntu-24.04 WSL in this checkout:
+
+```bash
+# Build the pinned Hyperlight assets and local images
+bash ./scripts/kind-nested-wsl.sh build
+
+# Create/configure KIND, load images, and run the smoke proof
+bash ./scripts/kind-nested-wsl.sh setup
+
+# Run the paced presentation, or use --noninteractive for automation.
+# Prepared clusters start immediately; after reset, this performs setup first.
+bash ./scripts/kind-nested-wsl.sh demo
+bash ./scripts/kind-nested-wsl.sh demo --noninteractive
+
+# Inspect or completely reset the dedicated cluster
+bash ./scripts/kind-nested-wsl.sh status
+bash ./scripts/kind-nested-wsl.sh reset
+```
+
+The wrapper installs pinned KIND `v0.33.0` under
+`~/.cache/hyperlight-kind/tools`, verifies the signed Hyperlight commit, builds
+the pinned strict Minijail helper, and keeps builds and Docker contexts under
+the native WSL filesystem. It loads images directly into KIND; no registry or
+cloud cluster is required.
+
+This is intentionally **local KIND qualification**, not generic production
+Kubernetes support. The KIND node uses a narrow containerd `runc` wrapper
+selected by the `hyperlight-delegated` RuntimeClass. It creates the empty
+cgroup-v2 delegation before application start. The demo application runs as
+UID 1000, is not privileged, has every Linux capability dropped, and sees only
+its namespaced cgroup subtree. The existing Device Plugin independently
+injects `/dev/kvm` through CDI. A named launcher seccomp profile permits the
+namespace setup Minijail requires while denying unrelated high-risk syscall
+families; Minijail then applies its stricter worker filter and Landlock policy.
+
 ```bash
 # Check status
 just status

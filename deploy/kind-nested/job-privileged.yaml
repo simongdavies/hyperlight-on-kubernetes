@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hyperlight-nested-privileged-baseline
+  namespace: hyperlight-system
+  labels:
+    app.kubernetes.io/name: hyperlight-nested-privileged-baseline
+    app.kubernetes.io/part-of: hyperlight
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hyperlight-nested-privileged-baseline
+        app.kubernetes.io/part-of: hyperlight
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        hyperlight.dev/nested-demo: "true"
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: demo
+          image: hyperlight-nested-demo:bb153b2
+          imagePullPolicy: Never
+          command:
+            - /usr/local/bin/hyperlight-kind-privileged-entrypoint
+          args:
+            - demo
+          env:
+            - name: DEMO_PACE_SECONDS
+              value: "${DEMO_PACE_SECONDS}"
+            - name: RUST_LOG
+              value: "info"
+          securityContext:
+            privileged: true
+            seccompProfile:
+              type: Unconfined
+          resources:
+            requests:
+              hyperlight.dev/hypervisor: "1"
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              hyperlight.dev/hypervisor: "1"
+              cpu: "4"
+              memory: "4Gi"

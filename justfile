@@ -66,6 +66,26 @@ clean:
 # Local Development (KIND)
 # =============================================================================
 
+# Build the nested Hyperlight assets and local images without creating a cluster
+nested-kind-build:
+    bash {{project_root}}/scripts/kind-nested-wsl.sh build
+
+# Build, create, and run the real nested Hyperlight KIND scenario in Ubuntu-24.04 WSL
+nested-kind-setup:
+    bash {{project_root}}/scripts/kind-nested-wsl.sh setup
+
+# Run the paced nested Hyperlight presentation
+nested-kind-demo *args:
+    bash {{project_root}}/scripts/kind-nested-wsl.sh demo {{args}}
+
+# Validate nested KIND scripts and manifests without running the cluster scenario
+nested-kind-test:
+    bash {{project_root}}/scripts/kind-nested-wsl.sh test
+
+# Delete the dedicated nested Hyperlight KIND cluster
+nested-kind-reset:
+    bash {{project_root}}/scripts/kind-nested-wsl.sh reset
+
 # Create KIND cluster with local registry
 local-up:
     {{project_root}}/deploy/local/setup.sh
@@ -362,6 +382,32 @@ ci-test-clean: ci-test
 # =============================================================================
 # Development
 # =============================================================================
+
+# Apply all repository formatting required before a signed commit
+fmt-apply: fmt
+
+# Build both shipped container images
+build: plugin-build app-build
+
+# Run the strict native Go and Rust linters
+clippy: lint-strict
+
+# Cross-check the Rust host application for Windows from Ubuntu WSL
+clippyw:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    grep -qi microsoft /proc/version ||
+        { echo "clippyw must run inside Ubuntu WSL" >&2; exit 1; }
+    command -v x86_64-w64-mingw32-gcc >/dev/null ||
+        { echo "x86_64-w64-mingw32-gcc is required" >&2; exit 1; }
+    cd {{hyperlight_app_dir}}/host
+    cargo clippy --target x86_64-pc-windows-gnu -- -D warnings
+
+# Run unit tests and static validation for the nested KIND integration
+test:
+    cd {{device_plugin_dir}} && go test ./...
+    cd {{hyperlight_app_dir}}/host && cargo test
+    bash {{project_root}}/scripts/kind-nested-wsl.sh test
 
 # Format code (Go + Rust)
 fmt:

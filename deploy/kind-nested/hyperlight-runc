@@ -1,0 +1,90 @@
+#!/bin/bash
+set -euo pipefail
+
+real_runc=/usr/local/sbin/runc
+hook=/opt/hyperlight-runtime/hyperlight-cgroup-hook
+runtime_state=/run/hyperlight-runtime
+command=
+bundle=
+container_id=
+
+fail() {
+    echo "hyperlight runtime: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    local id=$1
+    local state_file=$runtime_state/$id.cgroup
+    [[ -r $state_file ]] || return 0
+    local relative
+    relative=$(cat "$state_file")
+    [[ -n $relative && $relative != / ]] || fail "invalid saved cgroup path"
+    local root=/sys/fs/cgroup$relative
+    local provider=$root/hyperlight-provider
+    local application=$root/application
+    if [[ -e $provider/cgroup.kill ]]; then
+        printf 1 >"$provider/cgroup.kill" 2>/dev/null || true
+    fi
+    for _ in {1..100}; do
+        [[ ! -r $provider/cgroup.events ]] && break
+        grep -q '^populated 0$' "$provider/cgroup.events" && break
+        sleep 0.01
+    done
+    [[ ! -d $provider ]] ||
+        find "$provider" -depth -type d -exec rmdir {} + 2>/dev/null ||
+        fail "provider cgroup cleanup failed"
+    rmdir "$application" 2>/dev/null || true
+    rm -f "$state_file"
+}
+
+args=("$@")
+for ((index = 0; index < ${#args[@]}; index++)); do
+    case ${args[index]} in
+        create|delete)
+            command=${args[index]}
+            ;;
+        --bundle|-b)
+            ((index + 1 < ${#args[@]})) || fail "missing bundle argument"
+            bundle=${args[index + 1]}
+            ;;
+    esac
+done
+container_id=${args[${#args[@]}-1]:-}
+
+if [[ $command == create ]]; then
+    [[ -n $bundle && -f $bundle/config.json ]] || fail "OCI bundle is unavailable"
+    [[ -x $hook ]] || fail "cgroup hook is unavailable"
+    temporary=$bundle/config.json.hyperlight
+    jq --arg hook "$hook" '
+        .mounts |= map(
+            if .destination == "/sys/fs/cgroup" then
+                .options = (((.options // []) | map(select(. != "ro" and . != "rw"))) + ["rw"])
+            else
+                .
+            end
+        )
+        | .hooks = (.hooks // {})
+        | .hooks.createRuntime = ((.hooks.createRuntime // []) + [{
+            path: $hook,
+            args: [$hook],
+            env: [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HYPERLIGHT_DELEGATED_UID=1000",
+                "HYPERLIGHT_DELEGATED_GID=1000"
+            ]
+        }])
+    ' "$bundle/config.json" >"$temporary"
+    chmod --reference="$bundle/config.json" "$temporary"
+    mv "$temporary" "$bundle/config.json"
+    if ! "$real_runc" "$@"; then
+        cleanup "$container_id" || true
+        exit 1
+    fi
+    exit 0
+fi
+
+if [[ $command == delete ]]; then
+    cleanup "$container_id"
+fi
+exec "$real_runc" "$@"
