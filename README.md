@@ -56,6 +56,54 @@ injects `/dev/kvm` through CDI. A named launcher seccomp profile permits the
 namespace setup Minijail requires while denying unrelated high-risk syscall
 families; Minijail then applies its stricter worker filter and Landlock policy.
 
+### Nested Hyperlight VM demo on AKS KVM nodes
+
+The same unprivileged application model can be installed on an existing AKS
+cluster with an Ubuntu KVM pool whose kernel exposes Landlock ABI 5 or newer
+(normally Linux 6.10+):
+
+```bash
+# Create a minimal KVM-only cluster and configure kubectl
+just nested-aks-cluster-create
+just nested-aks-connect
+
+# Build in Ubuntu-24.04 WSL, push to ACR, and configure the KVM nodes.
+# setup also refreshes the kubectl context.
+just nested-aks-setup
+
+# Run the paced presentation, or the raw smoke workflow
+just nested-aks-demo
+just nested-aks-demo --noninteractive
+just nested-aks-smoke
+
+# Inspect, remove only the integration, or destroy all Azure resources
+just nested-aks-status
+just nested-aks-undeploy
+just nested-aks-cluster-delete --yes --wait
+```
+
+AKS does not expose KIND's `containerdConfigPatches`. A privileged installer
+DaemonSet therefore performs the narrow node operation: it installs a static
+runtime wrapper and hook, installs the named seccomp profile, adds one
+containerd runtime handler, restarts containerd only when configuration
+changes, and labels the node ready only after validation. The demo Job remains
+non-root and non-privileged. Node replacement and autoscaling are handled by
+the DaemonSet running on each new KVM node.
+
+This is a qualification/prototype integration, not an AKS-supported custom
+runtime contract. AKS owns node images and containerd configuration, so node
+image upgrades can require requalification. Use `nested-aks-undeploy` before
+removing the installer or KVM node pool so it can explicitly restore the
+managed containerd block on every node.
+
+The September 2026 live qualification of the default AKS Ubuntu 24.04 image
+(`6.8.0-1067-azure`) found Landlock ABI 4. The installer now rejects that image
+before changing containerd because lowering the pinned worker policy to ABI 4
+would drop the required ABI-5 filesystem `ioctl` restriction. The cluster
+lifecycle and KVM/CDI/RuntimeClass path were exercised successfully, but the
+secure nested workload remains blocked until AKS offers a qualifying node
+kernel or a separately qualified node image.
+
 ```bash
 # Check status
 just status
@@ -180,7 +228,7 @@ kubectl logs -l app=hyperlight-hello -f
 |-------|-------------|
 | [Command Reference](docs/commands.md) | All `just` commands explained |
 | [Local Development](docs/local-development.md) | Test with KIND + local registry |
-| [Azure Deployment](docs/azure-deployment.md) | Production on AKS + ACR |
+| [Azure Deployment](docs/azure-deployment.md) | AKS device-plugin and delegated-runtime deployment |
 | [GHCR Publishing](docs/ghcr-publishing.md) | Publish images to GitHub |
 | [Architecture](docs/architecture.md) | How the device plugin works |
 
@@ -205,6 +253,9 @@ kubectl logs -l app=hyperlight-hello -f
 │   │   ├── teardown.sh
 │   │   └── device-plugin.yaml
 │   └── azure/               # Azure deployment
+│       ├── runtime-installer/ # Static wrapper/hook and node installer image
+│       ├── runtime-installer.yaml
+│       ├── nested-job.yaml
 │       ├── setup.sh
 │       ├── teardown.sh
 │       └── config.env
@@ -226,6 +277,17 @@ just plugin-acr-push         # Push to Azure Container Registry
 just plugin-azure-deploy     # Deploy to AKS
 just plugin-ghcr-push        # Push to ghcr.io/hyperlight-dev
 
+# Nested AKS RuntimeClass demo
+just nested-aks-build        # Build plugin, workload, and installer images
+just nested-aks-cluster-create # Create minimal KVM-only AKS + ACR
+just nested-aks-connect      # Configure kubectl for that cluster
+just nested-aks-publish      # Push all images to ACR
+just nested-aks-deploy       # Configure an existing AKS KVM pool
+just nested-aks-demo         # Run the paced AKS presentation
+just nested-aks-smoke        # Run only the workload and cleanup checks
+just nested-aks-undeploy     # Restore containerd and remove the integration
+just nested-aks-cluster-delete --yes --wait # Restore and delete Azure resources
+
 # Example Hyperlight App
 just app-build               # Build app (scratch image)
 just app-local-deploy        # Deploy to KIND
@@ -235,6 +297,7 @@ just app-azure-deploy        # Deploy to AKS
 just local-up                # Create KIND cluster + registry
 just local-down              # Tear down KIND
 just azure-up                # Create Azure infrastructure
+just azure-up-kvm            # Create AKS without the optional MSHV pool
 just azure-stop              # Stop AKS cluster 
 just azure-start             # Start AKS cluster
 just azure-down              # Delete all Azure resources

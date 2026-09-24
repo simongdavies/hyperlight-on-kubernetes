@@ -1,4 +1,5 @@
 *.sh text eol=lf
+*.env text eol=lf
 Dockerfile text eol=lf
 deploy/kind-nested/hyperlight-cgroup-hook text eol=lf
 deploy/kind-nested/hyperlight-runc text eol=lf

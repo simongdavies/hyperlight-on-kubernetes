@@ -86,6 +86,62 @@ nested-kind-test:
 nested-kind-reset:
     bash {{project_root}}/scripts/kind-nested-wsl.sh reset
 
+# Build the real nested Hyperlight and AKS runtime-installer images
+nested-aks-build:
+    bash {{project_root}}/scripts/aks-nested.sh build
+
+# Create a minimal AKS cluster, KVM pool, and ACR for the nested demo
+nested-aks-cluster-create:
+    bash {{project_root}}/scripts/aks-nested.sh cluster-create
+
+# Configure kubectl for the nested-demo AKS cluster
+nested-aks-connect:
+    bash {{project_root}}/scripts/aks-nested.sh connect
+
+# Build only the AKS node runtime installer image
+runtime-installer-build:
+    docker build -f {{project_root}}/deploy/azure/runtime-installer/Dockerfile -t hyperlight-runtime-installer:{{image_tag}} {{project_root}}
+
+# Run unit tests for the static AKS runtime wrapper and OCI hook
+runtime-installer-test:
+    cd {{project_root}}/deploy/azure/runtime-installer && go test ./...
+
+# Push the nested demo, device plugin, and runtime installer to ACR
+nested-aks-publish:
+    bash {{project_root}}/scripts/aks-nested.sh publish
+
+# Install the device plugin and delegated RuntimeClass on an existing AKS cluster
+nested-aks-deploy:
+    bash {{project_root}}/scripts/aks-nested.sh deploy
+
+# Build, publish, and deploy the nested Hyperlight AKS integration
+nested-aks-setup:
+    bash {{project_root}}/scripts/aks-nested.sh setup
+
+# Run the paced real nested Hyperlight presentation on AKS
+nested-aks-demo *args:
+    bash {{project_root}}/scripts/aks-nested.sh demo {{args}}
+
+# Run the AKS workload without the paced presentation
+nested-aks-smoke:
+    bash {{project_root}}/scripts/aks-nested.sh smoke
+
+# Show delegated-runtime readiness on AKS KVM nodes
+nested-aks-status:
+    bash {{project_root}}/scripts/aks-nested.sh status
+
+# Remove the delegated runtime and restore AKS containerd configuration
+nested-aks-undeploy:
+    bash {{project_root}}/scripts/aks-nested.sh undeploy
+
+# Restore nodes and delete the AKS cluster, ACR, and resource group
+nested-aks-cluster-delete *args:
+    bash {{project_root}}/scripts/aks-nested.sh cluster-delete {{args}}
+
+# Validate AKS runtime code, image, scripts, and manifests locally
+nested-aks-test:
+    bash {{project_root}}/scripts/aks-nested.sh test
+
 # Create KIND cluster with local registry
 local-up:
     {{project_root}}/deploy/local/setup.sh
@@ -128,6 +184,10 @@ azure-up:
 # Create Azure infrastructure without ACR (for GHCR deployments)
 azure-up-no-acr:
     {{project_root}}/deploy/azure/setup.sh --no-acr
+
+# Create AKS infrastructure with only the system and Ubuntu KVM pools
+azure-up-kvm:
+    KVM_NODE_COUNT=1 KVM_NODE_MIN_COUNT=1 KVM_NODE_MAX_COUNT=2 {{project_root}}/deploy/azure/setup.sh --kvm-only
 
 # Tear down Azure infrastructure
 azure-down:
@@ -386,8 +446,8 @@ ci-test-clean: ci-test
 # Apply all repository formatting required before a signed commit
 fmt-apply: fmt
 
-# Build both shipped container images
-build: plugin-build app-build
+# Build all shipped container images
+build: plugin-build app-build runtime-installer-build
 
 # Run the strict native Go and Rust linters
 clippy: lint-strict
@@ -406,12 +466,15 @@ clippyw:
 # Run unit tests and static validation for the nested KIND integration
 test:
     cd {{device_plugin_dir}} && go test ./...
+    cd {{project_root}}/deploy/azure/runtime-installer && go test ./...
     cd {{hyperlight_app_dir}}/host && cargo test
     bash {{project_root}}/scripts/kind-nested-wsl.sh test
+    bash {{project_root}}/scripts/aks-nested.sh test
 
 # Format code (Go + Rust)
 fmt:
     cd {{device_plugin_dir}} && go fmt ./...
+    cd {{project_root}}/deploy/azure/runtime-installer && go fmt ./...
     cd {{hyperlight_app_dir}} && cargo fmt --all
 
 # Check formatting without modifying files (for CI)
@@ -426,6 +489,15 @@ fmt-check:
         exit 1
     fi
     echo "✓ Go code formatted"
+
+    echo "Checking AKS runtime Go formatting..."
+    cd {{project_root}}/deploy/azure/runtime-installer
+    if [ -n "$(gofmt -l .)" ]; then
+        echo "❌ AKS runtime Go code is not formatted. Run 'just fmt'"
+        gofmt -d .
+        exit 1
+    fi
+    echo "✓ AKS runtime Go code formatted"
     
     echo "Checking Rust formatting..."
     cd {{hyperlight_app_dir}}
@@ -435,6 +507,7 @@ fmt-check:
 # Run linters (Go + Rust host only - guest is no_std)
 lint:
     cd {{device_plugin_dir}} && go vet ./...
+    cd {{project_root}}/deploy/azure/runtime-installer && go vet ./...
     cd {{hyperlight_app_dir}}/host && cargo clippy
 
 # Run linters with warnings as errors (for CI)
@@ -444,6 +517,10 @@ lint-strict:
     echo "Running Go vet..."
     cd {{device_plugin_dir}} && go vet ./...
     echo "✓ Go vet passed"
+
+    echo "Running AKS runtime Go vet..."
+    cd {{project_root}}/deploy/azure/runtime-installer && go vet ./...
+    echo "✓ AKS runtime Go vet passed"
     
     echo "Running Rust clippy with strict warnings..."
     cd {{hyperlight_app_dir}}/host && cargo clippy -- -D warnings

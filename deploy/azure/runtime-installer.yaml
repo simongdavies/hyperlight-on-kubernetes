@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hyperlight-node-system
+  labels:
+    app.kubernetes.io/name: hyperlight-node-system
+    app.kubernetes.io/part-of: hyperlight
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hyperlight-runtime-installer
+  namespace: hyperlight-node-system
+  labels:
+    app.kubernetes.io/name: hyperlight-runtime-installer
+    app.kubernetes.io/part-of: hyperlight
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hyperlight-runtime-installer
+  labels:
+    app.kubernetes.io/name: hyperlight-runtime-installer
+    app.kubernetes.io/part-of: hyperlight
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hyperlight-runtime-installer
+  labels:
+    app.kubernetes.io/name: hyperlight-runtime-installer
+    app.kubernetes.io/part-of: hyperlight
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hyperlight-runtime-installer
+subjects:
+  - kind: ServiceAccount
+    name: hyperlight-runtime-installer
+    namespace: hyperlight-node-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: hyperlight-runtime-installer
+  namespace: hyperlight-node-system
+  labels:
+    app.kubernetes.io/name: hyperlight-runtime-installer
+    app.kubernetes.io/part-of: hyperlight
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hyperlight-runtime-installer
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hyperlight-runtime-installer
+        app.kubernetes.io/part-of: hyperlight
+    spec:
+      serviceAccountName: hyperlight-runtime-installer
+      hostPID: true
+      nodeSelector:
+        hyperlight.dev/enabled: "true"
+        hyperlight.dev/hypervisor: kvm
+        kubernetes.io/arch: amd64
+        kubernetes.io/os: linux
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: installer
+          image: ${RUNTIME_INSTALLER_IMAGE}
+          imagePullPolicy: Always
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            allowPrivilegeEscalation: true
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/sbin/install-hyperlight-runtime
+                - check
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: containerd
+              mountPath: /host-containerd
+            - name: runtime
+              mountPath: /host-runtime
+            - name: runtime-state
+              mountPath: /host-runtime-state
+            - name: seccomp
+              mountPath: /host-seccomp
+            - name: cgroup
+              mountPath: /host-cgroup
+              readOnly: true
+            - name: kvm
+              mountPath: /host-dev-kvm
+              readOnly: true
+      volumes:
+        - name: containerd
+          hostPath:
+            path: /etc/containerd
+            type: Directory
+        - name: runtime
+          hostPath:
+            path: /opt/hyperlight-runtime
+            type: DirectoryOrCreate
+        - name: runtime-state
+          hostPath:
+            path: /run/hyperlight-runtime
+            type: DirectoryOrCreate
+        - name: seccomp
+          hostPath:
+            path: /var/lib/kubelet/seccomp
+            type: DirectoryOrCreate
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        - name: kvm
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: hyperlight-delegated
+  labels:
+    app.kubernetes.io/name: hyperlight-delegated
+    app.kubernetes.io/part-of: hyperlight
+handler: hyperlight-delegated
+scheduling:
+  nodeSelector:
+    hyperlight.dev/runtime: delegated
+    hyperlight.dev/hypervisor: kvm
+    kubernetes.io/arch: amd64

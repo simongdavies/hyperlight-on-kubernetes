@@ -34,6 +34,7 @@ sync_native() {
     rsync -a --delete \
         --exclude .git \
         --exclude .kind-nested-assets \
+        --exclude hyperlight-app/target \
         "$source_root/" "$native_root/"
     find "$native_root" -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
     sed -i 's/\r$//' \

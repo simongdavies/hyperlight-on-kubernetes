@@ -5,8 +5,9 @@
 # Creates AKS cluster with KVM and MSHV node pools, and optionally ACR.
 # This script handles infrastructure only - use deploy.sh to deploy apps.
 #
-# Usage: ./setup.sh [--no-acr]
+# Usage: ./setup.sh [--no-acr] [--kvm-only]
 #   --no-acr    Skip ACR creation (use when deploying from GHCR)
+#   --kvm-only  Skip the Azure Linux MSHV node pool
 #
 set -euo pipefail
 
@@ -15,13 +16,21 @@ source "${SCRIPT_DIR}/../common.sh"
 
 # Parse arguments
 SKIP_ACR=false
-for arg in "$@"; do
-    case $arg in
+SKIP_MSHV=false
+while (($# > 0)); do
+    case $1 in
         --no-acr)
             SKIP_ACR=true
-            shift
+            ;;
+        --kvm-only)
+            SKIP_MSHV=true
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            exit 1
             ;;
     esac
+    shift
 done
 
 # Load configuration
@@ -71,6 +80,11 @@ check_prerequisites() {
     
     if ! az account show &> /dev/null; then
         log_error "Not logged in to Azure CLI. Run 'az login' first."
+        exit 1
+    fi
+    if ! az account get-access-token --output none &> /dev/null; then
+        log_error "Azure CLI authentication has expired."
+        log_error "Run: az login --tenant \$(az account show --query tenantId -o tsv)"
         exit 1
     fi
     
@@ -229,7 +243,9 @@ print_summary() {
     echo ""
     echo "Node Pools:"
     echo "  - ${KVM_NODE_POOL_NAME}: Ubuntu with KVM"
-    echo "  - ${MSHV_NODE_POOL_NAME}: AzureLinux with MSHV"
+    if [ "$SKIP_MSHV" = false ]; then
+        echo "  - ${MSHV_NODE_POOL_NAME}: AzureLinux with MSHV"
+    fi
     echo ""
     echo "Next steps:"
     if [ "$SKIP_ACR" = false ]; then
@@ -267,7 +283,11 @@ main() {
     fi
     create_aks_cluster
     create_kvm_nodepool
-    create_mshv_nodepool
+    if [ "$SKIP_MSHV" = false ]; then
+        create_mshv_nodepool
+    else
+        log_info "Skipping MSHV node pool (--kvm-only)"
+    fi
     if [ "$SKIP_ACR" = false ]; then
         attach_acr
     fi
