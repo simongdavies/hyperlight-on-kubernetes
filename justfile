@@ -68,23 +68,23 @@ clean:
 
 # Build the nested Hyperlight assets and local images without creating a cluster
 nested-kind-build:
-    bash {{project_root}}/scripts/kind-nested-wsl.sh build
+    bash {{project_root}}/scripts/kind-nested.sh build
 
-# Build, create, and run the real nested Hyperlight KIND scenario in Ubuntu-24.04 WSL
+# Build, create, and run the real nested Hyperlight KIND scenario on Ubuntu 24.04
 nested-kind-setup:
-    bash {{project_root}}/scripts/kind-nested-wsl.sh setup
+    bash {{project_root}}/scripts/kind-nested.sh setup
 
 # Run the paced nested Hyperlight presentation
 nested-kind-demo *args:
-    bash {{project_root}}/scripts/kind-nested-wsl.sh demo {{args}}
+    bash {{project_root}}/scripts/kind-nested.sh demo {{args}}
 
 # Validate nested KIND scripts and manifests without running the cluster scenario
 nested-kind-test:
-    bash {{project_root}}/scripts/kind-nested-wsl.sh test
+    bash {{project_root}}/scripts/kind-nested.sh test
 
 # Delete the dedicated nested Hyperlight KIND cluster
 nested-kind-reset:
-    bash {{project_root}}/scripts/kind-nested-wsl.sh reset
+    bash {{project_root}}/scripts/kind-nested.sh reset
 
 # Build the real nested Hyperlight and AKS runtime-installer images
 nested-aks-build:
@@ -468,7 +468,7 @@ test:
     cd {{device_plugin_dir}} && go test ./...
     cd {{project_root}}/deploy/azure/runtime-installer && go test ./...
     cd {{hyperlight_app_dir}}/host && cargo test
-    bash {{project_root}}/scripts/kind-nested-wsl.sh test
+    bash {{project_root}}/scripts/kind-nested.sh test
     bash {{project_root}}/scripts/aks-nested.sh test
 
 # Format code (Go + Rust)

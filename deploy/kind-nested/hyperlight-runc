@@ -55,8 +55,13 @@ container_id=${args[${#args[@]}-1]:-}
 if [[ $command == create ]]; then
     [[ -n $bundle && -f $bundle/config.json ]] || fail "OCI bundle is unavailable"
     [[ -x $hook ]] || fail "cgroup hook is unavailable"
+    apparmor_profile=
+    if [[ -r /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]] &&
+        [[ $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns) == 1 ]]; then
+        apparmor_profile=hyperlight-userns
+    fi
     temporary=$bundle/config.json.hyperlight
-    jq --arg hook "$hook" '
+    jq --arg hook "$hook" --arg apparmor_profile "$apparmor_profile" '
         .mounts |= map(
             if .destination == "/sys/fs/cgroup" then
                 .options = (((.options // []) | map(select(. != "ro" and . != "rw"))) + ["rw"])
@@ -64,6 +69,13 @@ if [[ $command == create ]]; then
                 .
             end
         )
+        | if $apparmor_profile != "" then
+            .linux.maskedPaths = []
+            | .linux.readonlyPaths = []
+            | .process.apparmorProfile = $apparmor_profile
+          else
+            .
+          end
         | .hooks = (.hooks // {})
         | .hooks.createRuntime = ((.hooks.createRuntime // []) + [{
             path: $hook,

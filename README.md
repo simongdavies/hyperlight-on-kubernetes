@@ -9,7 +9,7 @@ Run [Hyperlight](https://github.com/hyperlight-dev/hyperlight) sandboxes in Kube
 | **Local (KIND)** | `just local-up && just plugin-build && just plugin-local-push && just plugin-local-deploy` |
 | **Azure (AKS)** | `just azure-up && just get-aks-credentials && just plugin-build && just plugin-acr-push && just plugin-azure-deploy` |
 
-### Nested Hyperlight VM demo in Ubuntu-24.04 WSL
+### Nested Hyperlight VM demo on Ubuntu 24.04
 
 The dedicated nested demo runs the landed Hyperlight containment stack from
 signed commit `bb153b2db78e2c8a8bf035a40c65afe8f93afdca`:
@@ -21,31 +21,44 @@ outer Hyperlight guest
         -> inner guest-function calls
 ```
 
-Run these commands from Ubuntu-24.04 WSL in this checkout:
+Run these commands from Ubuntu 24.04, either natively or under WSL, in this
+checkout:
 
 ```bash
+# A clean machine can clone this public branch anonymously.
+git clone --branch simongdavies-kubernetes-process-integration --single-branch \
+  https://github.com/simongdavies/hyperlight-on-kubernetes.git
+cd hyperlight-on-kubernetes
+
 # Build the pinned Hyperlight assets and local images
-bash ./scripts/kind-nested-wsl.sh build
+bash ./scripts/kind-nested.sh build
 
 # Create/configure KIND, load images, and run the smoke proof
-bash ./scripts/kind-nested-wsl.sh setup
+bash ./scripts/kind-nested.sh setup
 
 # Run the paced presentation, or use --noninteractive for automation.
 # Prepared clusters start immediately; after reset, this performs setup first.
-bash ./scripts/kind-nested-wsl.sh demo
-bash ./scripts/kind-nested-wsl.sh demo --noninteractive
+bash ./scripts/kind-nested.sh demo
+bash ./scripts/kind-nested.sh demo --noninteractive
 
 # Inspect or completely reset the dedicated cluster
-bash ./scripts/kind-nested-wsl.sh status
-bash ./scripts/kind-nested-wsl.sh reset
+bash ./scripts/kind-nested.sh status
+bash ./scripts/kind-nested.sh reset
 ```
+
+Install Docker, kubectl, Git, curl, rsync, Python 3, a C/C++ build toolchain,
+`pkg-config`, `libcap-dev`, Clang, CMake, Protobuf, OpenSSL development files,
+`jq`, Rust toolchains 1.94 and 1.95, and `just` first. The current user must
+have read-write access to both Docker and `/dev/kvm`. See
+[Local Development](docs/local-development.md#required-host) for a clean
+Ubuntu installation checklist.
 
 The wrapper installs pinned KIND `v0.33.0` under
 `~/.cache/hyperlight-kind/tools`, fetches the Hyperlight fork branch
 `simongdavies-land-vm-authority` at signed commit
 `bb153b2db78e2c8a8bf035a40c65afe8f93afdca`, verifies that commit, builds the
 pinned strict Minijail helper, and keeps builds and Docker contexts under the
-native WSL filesystem. It loads images directly into KIND; no registry or
+native Linux filesystem. It loads images directly into KIND; no registry or
 cloud cluster is required.
 
 This is intentionally **local KIND qualification**, not generic production
@@ -57,6 +70,12 @@ its namespaced cgroup subtree. The existing Device Plugin independently
 injects `/dev/kvm` through CDI. A named launcher seccomp profile permits the
 namespace setup Minijail requires while denying unrelated high-risk syscall
 families; Minijail then applies its stricter worker filter and Landlock policy.
+On Ubuntu hosts that enable AppArmor's unprivileged-user-namespace restriction,
+setup loads a named profile that permits user-namespace creation only for this
+RuntimeClass. The runtime wrapper also removes the default proc masks for that
+container so newer kernels permit Minijail to mount its private procfs. It does
+not disable the host AppArmor sysctl, change ordinary pods, or make the
+application privileged.
 
 ### Nested Hyperlight VM demo on AKS KVM nodes
 

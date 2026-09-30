@@ -85,7 +85,7 @@ acr_login() {
 build_images() {
     require docker
     log_info "Building pinned nested Hyperlight and device-plugin images"
-    bash "$project_root/scripts/kind-nested-wsl.sh" build
+    bash "$project_root/scripts/kind-nested.sh" build
     log_info "Building AKS node runtime installer"
     docker build \
         -f "$project_root/deploy/azure/runtime-installer/Dockerfile" \
@@ -311,10 +311,10 @@ cluster_delete() {
 }
 
 test_local() {
+    local installer_manifest job_manifest
     require go
     require docker
     require envsubst
-    require kubectl
     (
         cd "$project_root/deploy/azure/runtime-installer"
         gofmt -w main.go main_test.go
@@ -327,11 +327,34 @@ test_local() {
         "$project_root"
     export RUNTIME_INSTALLER_IMAGE=example.invalid/hyperlight-runtime-installer:test
     export DEMO_IMAGE=example.invalid/hyperlight-nested-demo:test
-    envsubst '${RUNTIME_INSTALLER_IMAGE}' \
-        <"$project_root/deploy/azure/runtime-installer.yaml" |
-        kubectl create --dry-run=client --validate=false -f - >/dev/null
-    envsubst '${DEMO_IMAGE}' <"$project_root/deploy/azure/nested-job.yaml" |
-        kubectl create --dry-run=client --validate=false -f - >/dev/null
+    installer_manifest=$(
+        envsubst '${RUNTIME_INSTALLER_IMAGE}' \
+            <"$project_root/deploy/azure/runtime-installer.yaml"
+    )
+    grep -q 'kind: DaemonSet' <<<"$installer_manifest"
+    grep -q 'kind: RuntimeClass' <<<"$installer_manifest"
+    grep -q 'image: example.invalid/hyperlight-runtime-installer:test' \
+        <<<"$installer_manifest"
+    grep -q 'handler: hyperlight-delegated' <<<"$installer_manifest"
+    grep -q 'privileged: true' <<<"$installer_manifest"
+    if grep -q '\${RUNTIME_INSTALLER_IMAGE}' <<<"$installer_manifest"; then
+        fail "runtime installer image placeholder was not rendered"
+    fi
+
+    job_manifest=$(
+        envsubst '${DEMO_IMAGE}' <"$project_root/deploy/azure/nested-job.yaml"
+    )
+    grep -q 'kind: Job' <<<"$job_manifest"
+    grep -q 'runtimeClassName: hyperlight-delegated' <<<"$job_manifest"
+    grep -q 'image: example.invalid/hyperlight-nested-demo:test' <<<"$job_manifest"
+    grep -q 'runAsUser: 1000' <<<"$job_manifest"
+    grep -q 'allowPrivilegeEscalation: false' <<<"$job_manifest"
+    if grep -q 'privileged: true' <<<"$job_manifest"; then
+        fail "nested demo rendered as a privileged workload"
+    fi
+    if grep -q '\${DEMO_IMAGE}' <<<"$job_manifest"; then
+        fail "nested demo image placeholder was not rendered"
+    fi
     bash -n "$project_root/deploy/azure/runtime-installer/install-runtime.sh"
     bash -n "$project_root/deploy/azure/teardown.sh"
     bash -n "$project_root/scripts/aks-nested.sh"

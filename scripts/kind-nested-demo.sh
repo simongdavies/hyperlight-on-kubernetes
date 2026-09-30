@@ -12,6 +12,17 @@ if [[ -t 1 && -z ${NO_COLOR-} && ${TERM-} != dumb ]]; then
     color=1
 fi
 
+render_kind_config() {
+    sed "s|\${NATIVE_ROOT}|$root|g" \
+        "$root/deploy/kind-nested/kind-config.yaml"
+}
+
+render_job() {
+    local pace=$1
+    sed "s|\${DEMO_PACE_SECONDS}|$pace|" \
+        "$root/deploy/kind-nested/job.yaml"
+}
+
 style() {
     local code=$1
     shift
@@ -152,7 +163,7 @@ trap cleanup EXIT
 kubectl config use-context "kind-$cluster_name" >/dev/null
 
 section "1. Give the KIND node access to KVM" \
-    "This demo has one Kubernetes node. KIND names it hyperlight-nested-control-plane because the same node runs Kubernetes control-plane services and our workload. WSL has one /dev/kvm device. The Device Plugin detects that device and publishes 32 configurable scheduling slots called hyperlight.dev/hypervisor; 32 means 'up to 32 demo allocations', not 32 physical KVM devices. A pod requesting one slot is scheduled only onto this KVM-capable node, and CDI exposes /dev/kvm inside that pod."
+    "This demo has one Kubernetes node. KIND names it hyperlight-nested-control-plane because the same node runs Kubernetes control-plane services and our workload. The Ubuntu host has one /dev/kvm device. The Device Plugin detects that device and publishes 32 configurable scheduling slots called hyperlight.dev/hypervisor; 32 means 'up to 32 demo allocations', not 32 physical KVM devices. A pod requesting one slot is scheduled only onto this KVM-capable node, and CDI exposes /dev/kvm inside that pod."
 run kubectl get nodes \
     -o custom-columns='NAME:.metadata.name,READY:.status.conditions[-1].status,KVM-LABEL:.metadata.labels.hyperlight\.dev/hypervisor,HYPERLIGHT-DEVICES:.status.allocatable.hyperlight\.dev/hypervisor'
 run kubectl get daemonset,pods -n "$namespace" \
@@ -160,17 +171,17 @@ run kubectl get daemonset,pods -n "$namespace" \
 run_shell "kubectl logs -n $namespace daemonset/hyperlight-device-plugin --tail=20 | grep -E 'Detected hypervisor|CDI spec written|Advertising|Registered with kubelet'"
 
 section "2. Add a Hyperlight runtime option to the node" \
-    "The KIND configuration creates that one node and passes in four things it needs: WSL's /dev/kvm device, the runtime wrapper, the cgroup setup hook, and the launcher seccomp profile. containerd keeps its normal runc runtime for ordinary pods and adds a second option named hyperlight-delegated. CDI is enabled so the Device Plugin can inject /dev/kvm. SystemdCgroup=true makes runc use the exact cgroup path already created by kubelet/containerd; without it, the hook could prepare the wrong cgroup tree."
+    "The KIND configuration creates that one node and passes in four things it needs: the host's /dev/kvm device, the runtime wrapper, the cgroup setup hook, and the launcher seccomp profile. containerd keeps its normal runc runtime for ordinary pods and adds a second option named hyperlight-delegated. CDI is enabled so the Device Plugin can inject /dev/kvm. SystemdCgroup=true makes runc use the exact cgroup path already created by kubelet/containerd; without it, the hook could prepare the wrong cgroup tree."
 printf '\n'
 style '1;35' '[COMMAND]'
-style '35' " \$ sed \"s|\\\${NATIVE_ROOT}|$root|g\" $root/deploy/kind-nested/kind-config.yaml"
+style '35' " \$ render the host-specific $root/deploy/kind-nested/kind-config.yaml"
 printf '\n'
 style '1;37' '[OUTPUT]'
 printf '\n'
-sed "s|\${NATIVE_ROOT}|$root|g" "$root/deploy/kind-nested/kind-config.yaml"
+render_kind_config
 
 section "3. The runc wrapper" \
-    "This script sits immediately in front of the real runc. On container creation it makes the container's cgroup mount writable and tells runc to call the setup hook shown next. The container has a cgroup namespace: Linux presents its Kubernetes-assigned cgroup as /sys/fs/cgroup, hiding all parent, sibling-pod, and node cgroups above it. Writable therefore means writable only inside this container-owned view, subject to the file ownership set by the hook. On deletion the wrapper kills any leftover worker processes and removes the worker cgroups. The hook performs setup; the wrapper performs cleanup."
+    "This script sits immediately in front of the real runc. On container creation it makes the container's cgroup mount writable and tells runc to call the setup hook shown next. The container has a cgroup namespace: Linux presents its Kubernetes-assigned cgroup as /sys/fs/cgroup, hiding all parent, sibling-pod, and node cgroups above it. Writable therefore means writable only inside this container-owned view, subject to the file ownership set by the hook. On Ubuntu hosts that restrict unprivileged user namespaces, the wrapper selects the named userns AppArmor profile and removes the standard proc masks that otherwise prevent Minijail from mounting a private procfs on newer kernels. That adjustment applies only to this RuntimeClass; it does not disable the host sysctl or add container capabilities. On deletion the wrapper kills any leftover worker processes and removes the worker cgroups. The hook performs setup; the wrapper performs cleanup."
 show_file "$root/deploy/kind-nested/hyperlight-runc"
 
 section "4. The delegated-cgroup hook" \
@@ -186,11 +197,11 @@ section "6. The unprivileged demo Job" \
     "This is the exact Job Kubernetes will run. The application starts an outer Hyperlight guest, handles its host-function call in a separate confined worker, and starts an inner Hyperlight guest inside that worker. Kubernetes supplies the pod lifecycle and delegated cgroup. The Job selects the delegated runtime, requests one KVM slot, runs as UID/GID 1000, rejects image-defined supplementary groups, disables setuid-style privilege escalation, and drops every Linux capability. The tiny 10m CPU and 64 MiB requests reserve enough scheduling capacity for the demo without pretending it needs a large service allocation. The 1 CPU and 512 MiB limits are safety ceilings for the application plus outer and inner VM memory. Each worker can receive a tighter ProcessProfile, but no worker can exceed the pod ceiling."
 printf '\n'
 style '1;35' '[COMMAND]'
-style '35' " \$ sed \"s/\\\${DEMO_PACE_SECONDS}/1/\" $root/deploy/kind-nested/job.yaml"
+style '35' " \$ render the host-specific $root/deploy/kind-nested/job.yaml"
 printf '\n'
 style '1;37' '[OUTPUT]'
 printf '\n'
-sed 's/${DEMO_PACE_SECONDS}/1/' "$root/deploy/kind-nested/job.yaml"
+render_job 1
 
 section "7. The launcher seccomp profile" \
     "The standard Kubernetes profile blocks operations Minijail needs to build the worker sandbox, so this pod uses a small named profile for the application and launcher. It allows the namespace, mount, and session-keyring setup Minijail requires but continues to block unrelated high-risk operations such as module loading, BPF, tracing, and cross-process memory access. That outer profile remains active. Before the worker program starts, Minijail adds its stricter worker-specific filter and Landlock filesystem policy."
@@ -200,7 +211,7 @@ section "8. Deploy the scenario" \
     "Remove any prior run so the evidence belongs to this execution, apply the rendered Job, show where Kubernetes scheduled it, and wait for the Job controller to observe a successful exit. A failed prerequisite produces a failed Job rather than a success-shaped fallback."
 run kubectl delete job hyperlight-nested-demo -n "$namespace" \
     --ignore-not-found --cascade=foreground --wait=true
-run_shell "sed 's/\${DEMO_PACE_SECONDS}/1/' '$root/deploy/kind-nested/job.yaml' | kubectl apply -f -"
+run_shell "render_job 1 | kubectl apply -f -"
 demo_pod=$(kubectl get pod -n "$namespace" \
     -l job-name=hyperlight-nested-demo \
     -o jsonpath='{.items[0].metadata.name}')
@@ -263,4 +274,4 @@ echo "  - RuntimeClass grants only the delegated cgroup capability."
 echo "  - Minijail confines a separate host-function process."
 echo "  - The inner Hyperlight sandbox shares that worker process instead of adding another OS process."
 echo
-echo "Run 'bash ./scripts/kind-nested-wsl.sh reset' when you want to delete the KIND cluster."
+echo "Run 'bash ./scripts/kind-nested.sh reset' when you want to delete the KIND cluster."

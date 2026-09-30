@@ -2,7 +2,7 @@
 
 Quick start for testing Hyperlight on Kubernetes without cloud infrastructure.
 
-## Nested Hyperlight containment demo (Ubuntu-24.04 WSL)
+## Nested Hyperlight containment demo (Ubuntu 24.04)
 
 This workflow is separate from the small example application below. It builds
 the Hyperlight fork branch `simongdavies-land-vm-authority` at its pinned,
@@ -19,41 +19,89 @@ outer guest -> separate confined host-function process
 
 ### Required host
 
-- Ubuntu 24.04 running under WSL
+- Ubuntu 24.04, either native or running under WSL
 - `/dev/kvm` readable and writable by the current user
-- unified cgroup v2 with Docker's systemd cgroup driver
+- unified cgroup v2
 - unprivileged user namespaces
 - Landlock ABI 5 or newer
-- Docker and kubectl
+- Docker using cgroup v2 and the systemd cgroup driver
+- kubectl, Git, curl, rsync, Python 3, `jq`, and CA certificates
+- GCC, binutils, Make, `pkg-config`, `libcap-dev`, Clang, CMake,
+  `protobuf-compiler`, `libssl-dev`
+- Rust toolchains 1.94 and 1.95, plus `just`
 
 The setup fails before cluster creation when any requirement is unavailable.
-It does not change WSL services or lifecycle, and it does not install global
+It does not change host services or lifecycle, and it does not install global
 tools.
+
+On a clean Ubuntu 24.04 host, install the native packages and grant the current
+user access to Docker and KVM:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  ca-certificates clang cmake curl docker.io git jq libcap-dev libssl-dev \
+  build-essential pkg-config protobuf-compiler python3 rsync
+sudo systemctl enable --now docker
+sudo usermod -aG docker,kvm "$USER"
+```
+
+Start a new login session after changing group membership. If `/dev/kvm`
+retains an old numeric group after package installation, reapply Ubuntu's
+packaged device rule once:
+
+```bash
+sudo systemd-tmpfiles --create \
+  /usr/lib/tmpfiles.d/static-nodes-permissions.conf
+```
+
+Install kubectl using its
+[official Linux instructions](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/),
+then install the pinned Rust toolchains and `just`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+  sh -s -- -y --default-toolchain 1.95
+source "$HOME/.cargo/env"
+rustup toolchain install 1.94 1.95
+cargo install --locked just
+```
+
+The repository and pinned Hyperlight fork are fetched anonymously over HTTPS;
+no GitHub SSH key or access token is required.
+
+For a clean reproduction of the published branch:
+
+```bash
+git clone --branch simongdavies-kubernetes-process-integration --single-branch \
+  https://github.com/simongdavies/hyperlight-on-kubernetes.git
+cd hyperlight-on-kubernetes
+```
 
 ### Commands
 
-Run from this checkout inside Ubuntu-24.04 WSL:
+Run from this checkout on Ubuntu 24.04:
 
 ```bash
 # Static checks only
-bash ./scripts/kind-nested-wsl.sh test
+bash ./scripts/kind-nested.sh test
 
 # Build pinned sources and local images
-bash ./scripts/kind-nested-wsl.sh build
+bash ./scripts/kind-nested.sh build
 
 # Create/configure KIND and run the real smoke proof
-bash ./scripts/kind-nested-wsl.sh setup
+bash ./scripts/kind-nested.sh setup
 
 # Paced presentation. Prepared clusters start immediately; after reset, this
 # performs setup first.
-bash ./scripts/kind-nested-wsl.sh demo
+bash ./scripts/kind-nested.sh demo
 
 # Automation presentation
-bash ./scripts/kind-nested-wsl.sh demo --noninteractive
+bash ./scripts/kind-nested.sh demo --noninteractive
 
 # State and cleanup
-bash ./scripts/kind-nested-wsl.sh status
-bash ./scripts/kind-nested-wsl.sh reset
+bash ./scripts/kind-nested.sh status
+bash ./scripts/kind-nested.sh reset
 ```
 
 The wrapper copies the working tree once into
@@ -83,6 +131,23 @@ cross-process-memory syscalls. The launcher permits `keyctl` because Minijail
 uses `KEYCTL_JOIN_SESSION_KEYRING` to isolate the worker's session keyring.
 Before `/program` executes, Minijail adds the landed stricter worker seccomp
 filter, which denies all keyring access, and the Landlock policy.
+
+Ubuntu 24.04 can additionally set
+`kernel.apparmor_restrict_unprivileged_userns=1`. On those hosts the setup
+loads `deploy/kind-nested/hyperlight-userns.apparmor`, pinning the permission
+to create a user namespace to the named `hyperlight-userns` profile. The
+`hyperlight-delegated` runtime wrapper applies that profile directly to its OCI
+process; ordinary containers remain unchanged. The sysctl stays enabled.
+
+Newer kernels also reject Minijail's private procfs mount when the parent
+container has the standard OCI masked and read-only proc paths. On the same
+restricted-host path, the RuntimeClass wrapper removes those proc masks before
+launch. This is narrower than `privileged`: the application still runs as UID
+1000 with no Linux capabilities, no privilege escalation, the named seccomp
+profile, a cgroup namespace, and no host PID namespace. Minijail immediately
+creates its private user, PID, mount, IPC, and network namespaces and applies
+its stricter seccomp and Landlock policy. WSL and hosts without the AppArmor
+restriction retain the standard proc masks.
 
 The landed provider verifies and uses:
 
