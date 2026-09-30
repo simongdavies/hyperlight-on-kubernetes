@@ -4,9 +4,12 @@ Quick start for testing Hyperlight on Kubernetes without cloud infrastructure.
 
 ## Nested Hyperlight containment demo (Ubuntu-24.04 WSL)
 
-This workflow is separate from the small example application below. It runs the
-real nested containment scenario from signed Hyperlight commit
-`bb153b2db78e2c8a8bf035a40c65afe8f93afdca`:
+This workflow is separate from the small example application below. It builds
+the Hyperlight fork branch `simongdavies-land-vm-authority` at its pinned,
+signed tip `bb153b2db78e2c8a8bf035a40c65afe8f93afdca`, then runs the nested
+containment fixture included in that repository state. The containment work
+spans the branch history; the pinned tip itself makes the fixture output
+concise:
 
 ```text
 outer guest -> separate confined host-function process

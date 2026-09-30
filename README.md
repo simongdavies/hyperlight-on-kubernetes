@@ -41,9 +41,11 @@ bash ./scripts/kind-nested-wsl.sh reset
 ```
 
 The wrapper installs pinned KIND `v0.33.0` under
-`~/.cache/hyperlight-kind/tools`, verifies the signed Hyperlight commit, builds
-the pinned strict Minijail helper, and keeps builds and Docker contexts under
-the native WSL filesystem. It loads images directly into KIND; no registry or
+`~/.cache/hyperlight-kind/tools`, fetches the Hyperlight fork branch
+`simongdavies-land-vm-authority` at signed commit
+`bb153b2db78e2c8a8bf035a40c65afe8f93afdca`, verifies that commit, builds the
+pinned strict Minijail helper, and keeps builds and Docker contexts under the
+native WSL filesystem. It loads images directly into KIND; no registry or
 cloud cluster is required.
 
 This is intentionally **local KIND qualification**, not generic production
